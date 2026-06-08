@@ -3,74 +3,63 @@ import axios from "axios";
 
 const app = express();
 
-// ذاكرة مؤقتة (Cache)
-const cache = new Map();
-
 async function fetchStatus(caseId) {
   try {
-    // محاولة بسيطة من الموقع
     const res = await axios.get(
       "https://egov.uscis.gov/casestatus/mycasestatus.do",
       {
-        params: { appReceiptNum: caseId },
-        timeout: 10000
+        params: {
+          appReceiptNum: caseId
+        },
+        timeout: 15000,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36"
+        }
       }
     );
 
-    const text = res.data;
+    console.log("===== USCIS RESPONSE START =====");
+    console.log(String(res.data).substring(0, 5000));
+    console.log("===== USCIS RESPONSE END =====");
 
-    const match = text.match(
-      /<h1[^>]*>(.*?)<\/h1>/i
-    );
-
-    if (!match) return null;
-
-    return match[1].trim();
+    return {
+      debug: true
+    };
   } catch (e) {
-    return null;
+    console.log("ERROR:", e.message);
+
+    return {
+      error: e.message
+    };
   }
 }
+
+app.get("/", (req, res) => {
+  res.json({
+    status: "API running"
+  });
+});
 
 app.get("/status", async (req, res) => {
   const caseId = req.query.case;
 
   if (!caseId) {
-    return res.json({ error: "missing_case" });
-  }
-
-  // 1️⃣ رجّع من الكاش أولًا
-  if (cache.has(caseId)) {
     return res.json({
-      case_id: caseId,
-      status: cache.get(caseId),
-      source: "cache",
-      stable: true
+      error: "missing_case"
     });
   }
 
-  // 2️⃣ حاول تجيب جديد
-  const status = await fetchStatus(caseId);
+  const result = await fetchStatus(caseId);
 
-  if (status) {
-    cache.set(caseId, status);
-
-    return res.json({
-      case_id: caseId,
-      status,
-      source: "live",
-      stable: true
-    });
-  }
-
-  // 3️⃣ fallback (الأهم)
-  return res.json({
+  res.json({
     case_id: caseId,
-    status: "UNKNOWN / LAST KNOWN",
-    source: "fallback",
-    stable: true
+    result
   });
 });
 
-app.listen(3000, () => {
-  console.log("API running");
+const port = process.env.PORT || 3000;
+
+app.listen(port, () => {
+  console.log(`API running on port ${port}`);
 });
