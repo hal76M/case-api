@@ -1,10 +1,11 @@
-const express = require("express");
-const axios = require("axios");
+import express from "express";
+import { chromium } from "playwright";
 
 const app = express();
 
-// 🔥 Apify API (تحتاج توكن من حسابك)
-const APIFY_TOKEN = process.env.APIFY_TOKEN;
+app.get("/", (req, res) => {
+  res.json({ status: "API running" });
+});
 
 app.get("/status", async (req, res) => {
   const caseId = req.query.case;
@@ -13,25 +14,48 @@ app.get("/status", async (req, res) => {
     return res.json({ error: "missing_case" });
   }
 
+  let browser;
+
   try {
-    const response = await axios.post(
-      `https://api.apify.com/v2/acts/username~uscis-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}`,
-      {
-        caseNumber: caseId
-      }
+    browser = await chromium.launch({
+      headless: true
+    });
+
+    const page = await browser.newPage();
+
+    // الدخول للموقع الحقيقي
+    await page.goto(
+      "https://ceac.state.gov/CEACStatTracker/Status.aspx?App=IV",
+      { waitUntil: "networkidle" }
     );
 
-    const data = response.data?.[0];
+    // إدخال رقم الحالة
+    await page.fill(
+      'input[name="ctl00$ContentPlaceHolder1$Visa_Case_Number"]',
+      caseId
+    );
+
+    // ملاحظة: الكابتشا غالبًا تظهر → نتجاوزها بالانتظار اليدوي أو retry
+    await page.click('input[type="submit"]');
+
+    await page.waitForTimeout(6000);
+
+    const status = await page.textContent(
+      "#ctl00_ContentPlaceHolder1_ucApplicationStatusView_lblStatus"
+    );
+
+    await browser.close();
 
     res.json({
       case_id: caseId,
-      status: data?.status || "UNKNOWN",
-      description: data?.description || "",
-      source: "Apify",
+      status: status || "UNKNOWN",
+      source: "playwright-browser",
       checked_at: new Date().toISOString()
     });
 
   } catch (e) {
+    if (browser) await browser.close();
+
     res.json({
       error: "failed",
       message: e.message
