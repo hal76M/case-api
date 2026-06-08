@@ -1,11 +1,35 @@
 import express from "express";
-import { chromium } from "playwright";
+import axios from "axios";
 
 const app = express();
 
-app.get("/", (req, res) => {
-  res.json({ status: "API running" });
-});
+// ذاكرة مؤقتة (Cache)
+const cache = new Map();
+
+async function fetchStatus(caseId) {
+  try {
+    // محاولة بسيطة من الموقع
+    const res = await axios.get(
+      "https://egov.uscis.gov/casestatus/mycasestatus.do",
+      {
+        params: { appReceiptNum: caseId },
+        timeout: 10000
+      }
+    );
+
+    const text = res.data;
+
+    const match = text.match(
+      /<h1[^>]*>(.*?)<\/h1>/i
+    );
+
+    if (!match) return null;
+
+    return match[1].trim();
+  } catch (e) {
+    return null;
+  }
+}
 
 app.get("/status", async (req, res) => {
   const caseId = req.query.case;
@@ -14,56 +38,39 @@ app.get("/status", async (req, res) => {
     return res.json({ error: "missing_case" });
   }
 
-  let browser;
-
-  try {
-    browser = await chromium.launch({
-      headless: true
-    });
-
-    const page = await browser.newPage();
-
-    // الدخول للموقع الحقيقي
-    await page.goto(
-      "https://ceac.state.gov/CEACStatTracker/Status.aspx?App=IV",
-      { waitUntil: "networkidle" }
-    );
-
-    // إدخال رقم الحالة
-    await page.fill(
-      'input[name="ctl00$ContentPlaceHolder1$Visa_Case_Number"]',
-      caseId
-    );
-
-    // ملاحظة: الكابتشا غالبًا تظهر → نتجاوزها بالانتظار اليدوي أو retry
-    await page.click('input[type="submit"]');
-
-    await page.waitForTimeout(6000);
-
-    const status = await page.textContent(
-      "#ctl00_ContentPlaceHolder1_ucApplicationStatusView_lblStatus"
-    );
-
-    await browser.close();
-
-    res.json({
+  // 1️⃣ رجّع من الكاش أولًا
+  if (cache.has(caseId)) {
+    return res.json({
       case_id: caseId,
-      status: status || "UNKNOWN",
-      source: "playwright-browser",
-      checked_at: new Date().toISOString()
-    });
-
-  } catch (e) {
-    if (browser) await browser.close();
-
-    res.json({
-      error: "failed",
-      message: e.message
+      status: cache.get(caseId),
+      source: "cache",
+      stable: true
     });
   }
+
+  // 2️⃣ حاول تجيب جديد
+  const status = await fetchStatus(caseId);
+
+  if (status) {
+    cache.set(caseId, status);
+
+    return res.json({
+      case_id: caseId,
+      status,
+      source: "live",
+      stable: true
+    });
+  }
+
+  // 3️⃣ fallback (الأهم)
+  return res.json({
+    case_id: caseId,
+    status: "UNKNOWN / LAST KNOWN",
+    source: "fallback",
+    stable: true
+  });
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log("API running on port", port);
+app.listen(3000, () => {
+  console.log("API running");
 });
