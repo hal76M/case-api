@@ -3,23 +3,8 @@ const axios = require("axios");
 
 const app = express();
 
-async function getStatus(caseId) {
-  const url = `https://egov.uscis.gov/casestatus/mycasestatus.do?appReceiptNum=${caseId}`;
-
-  const res = await axios.get(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120",
-      "Accept": "text/html,application/xhtml+xml",
-      "Referer": "https://egov.uscis.gov/"
-    },
-    timeout: 15000
-  });
-
-  const status = res.data.match(/<h1>(.*?)<\/h1>/)?.[1] || "UNKNOWN";
-  const desc = res.data.match(/<p class="text-center">(.*?)<\/p>/s)?.[1] || "";
-
-  return { status, description: desc };
-}
+// 🔥 Apify API (تحتاج توكن من حسابك)
+const APIFY_TOKEN = process.env.APIFY_TOKEN;
 
 app.get("/status", async (req, res) => {
   const caseId = req.query.case;
@@ -29,13 +14,20 @@ app.get("/status", async (req, res) => {
   }
 
   try {
-    const data = await getStatus(caseId);
+    const response = await axios.post(
+      `https://api.apify.com/v2/acts/username~uscis-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}`,
+      {
+        caseNumber: caseId
+      }
+    );
+
+    const data = response.data?.[0];
 
     res.json({
       case_id: caseId,
-      source: "USCIS",
-      status: data.status,
-      description: data.description,
+      status: data?.status || "UNKNOWN",
+      description: data?.description || "",
+      source: "Apify",
       checked_at: new Date().toISOString()
     });
 
